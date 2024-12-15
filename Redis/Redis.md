@@ -165,4 +165,110 @@ rename-command flushall ""
 
 **string类型控制在10KB以内，hash，list，set，zset元素个数不要超过5000**
 
+通过指令查找bigkey
+
+追加参数 来查找
+
+```sh
+redis-cli ..... --bigkeys
+```
+
+使用MEMORY USAGE 来查找key和它的值在RAM中所占用的字节数
+
+```
+MEMORY USAGE key
+```
+
+#### 如何删除
+
 **非字符串的bigkey，不要使用del删除，使用scan、hscan....渐进式删除。同时防止Bigkey的过期时间自动删除问题**
+
+##### hash
+
+使用hscan**每次获得少量field-value**，**再使用hdel删除每个field**
+
+##### list
+
+使用ltrim
+
+##### Set
+
+使用sscan + srem
+
+##### SortedSet
+
+使用zscan + zrem
+
+#### Lazy Freeing
+
+调整redis.conf配置文**LAZY FREEING**
+
+##### 阻塞和非阻塞删除命令
+
+```properties
+lazyfree-lazy-server-del no -->> yes
+replica-lazy-flush no -->> yes
+lazyfree-lazy-user-del no -->> yes
+```
+
+## 缓存双写一致性问题
+
+### 读写缓存
+
+根据业务的不同选择不同的策略
+
+#### 同步直写策略
+
+指的是直接回写到redis，当数据库写入之后，**不开启异步线程**。**同步写入redis**
+
+**当你的业务数据是热点敏感信息的时候就要使用**。比如：VIP充值
+
+#### 异步缓写策略
+
+指的是当数据库写入之后，**开启异步线程，或者发消息给MQ来异步写入redis**
+
+**当你的业务数据不需要立即返回，不是热点信息的时候可以使用**
+
+### 双检加锁策略
+
+**防止在同一时间过多的请求打到Mysql，当过多的请求达到Mysql，也同时会过多的写入Redis**
+
+```java
+User user = redisTemplate.opsForValue().get(key);
+if(user == null){
+    synchronized(UserService.class){
+        user = redisTemplate.opsForValue().get(key);
+        if(user == null){
+            user = userMapper.select(id);
+            if(user == null){
+                return null;
+            }else{
+                redisTemplate.opsForValue().set(key,user);
+            }
+        }
+    }
+}
+return userl
+```
+
+## 大数据统计
+
+### 常见术语
+
+**PV**: （Page View）访问量, 即页面浏览量或点击量，衡量网站用户访问的网页数量；在一定统计周期内用户每打开或刷新一个页面就记录1次，多次打开或刷新同一页面则浏览量累计。
+**UV**: （Unique Visitor）独立访客，统计1天内访问某站点的用户数。可以理解成访问某网站的电脑的数量。页面访问人数，同一个账号访问同一个页面两次，UV算1次
+**DAU**： (Daily Active User)日活跃用户数量。常用于反映网站、互联网应用或网络游戏的运营情况。DAU通常统计一日（统计日）之内，登录或使用了某个产品的用户数（去除重复登录的用户），这与流量统计工具里的访客（UV）概念相似。
+MAU： (monthly active users)月活跃用户人数。是在线游戏的一个用户数量统计名词，数量越大意味着玩这款游戏的人越多。
+PCU： (Peak concurrent users )最高同时在线玩家人数。
+KPI： 关键绩效指标法，是企业绩效考核的方法之一，其特点是考核指标 围绕关键成果领域进行选取。
+ARPU： (Average Revenue Per User)即每用户平均收入，用于衡量电信运营商和互联网公司业务收入的指标。
+
+### 常见的四种统计
+
+- 聚合统计：共同好友、猜你喜欢。**指的是交集，并集，差集**
+- 排序统计：评论区根据日期排序统计。**ZSET**
+- 二值统计：钉钉中的签到打卡。指只存放true或false 1或0的统计。**bitmap**
+- 基数统计：对UV的统计。**指存放指定不重复的key的数据**。**hyperloglog**
+
+### hyperloglog / GEO / bitmap
+
